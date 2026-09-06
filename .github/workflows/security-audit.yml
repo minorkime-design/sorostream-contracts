@@ -16,7 +16,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run cargo audit
-        run: cargo audit --deny critical
+        run: cargo audit
       - name: Generate audit report
         if: always()
         run: |

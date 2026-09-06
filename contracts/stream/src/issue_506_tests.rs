@@ -2,8 +2,8 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token::{Client as TokenClient, StellarAssetClient},
-    Address, Bytes, Env,
+    token::StellarAssetClient,
+    Address, Env,
 };
 
 struct TestEnv {
@@ -48,6 +48,21 @@ fn client(t: &TestEnv) -> SoroStreamContractClient<'_> {
     SoroStreamContractClient::new(&t.env, &t.contract_id)
 }
 
+fn default_params() -> crate::types::CreateStreamParams {
+    crate::types::CreateStreamParams {
+        cliff_seconds: 0,
+        nonce: 0,
+        renew_count: None,
+        lock_until: 0,
+        allow_recipient_termination: false,
+        non_transferable: false,
+        holdback_amount: 0,
+        withdrawal_steps: None,
+        min_withdrawal_amount: None,
+        requires_recipient_approval: false,
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Issue #506: TTL Extension Strategy Tests
 // ─────────────────────────────────────────────────────────────────────────
@@ -65,13 +80,8 @@ fn test_issue_506_ttl_extension_on_withdraw() {
         &t.token_id,
         &500_000,
         &5000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &default_params(),
     );
 
     // Advance time and withdraw
@@ -81,7 +91,7 @@ fn test_issue_506_ttl_extension_on_withdraw() {
     // Stream should still exist and be retrievable
     let stream = c.get_stream(&stream_id);
     assert_eq!(stream.status, StreamStatus::Active);
-    assert!(stream.total_withdrawn > 0, "Total withdrawn should increase");
+    assert!(stream.options.total_withdrawn > 0, "Total withdrawn should increase");
 }
 
 #[test]
@@ -96,20 +106,15 @@ fn test_issue_506_ttl_extension_on_cancel() {
         &t.token_id,
         &500_000,
         &5000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &default_params(),
     );
 
     // Advance time significantly
     t.env.ledger().set_timestamp(2000);
 
     // Cancel should still work without storage expiry
-    c.cancel_stream(&t.sender, &stream_id);
+    c.cancel_stream(&stream_id, &t.sender);
 
     // Stream should be marked as cancelled (or removed if completed)
     let result = c.try_get_stream(&stream_id);
@@ -128,21 +133,16 @@ fn test_issue_506_ttl_extension_on_metadata_update() {
         &t.token_id,
         &500_000,
         &5000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &default_params(),
     );
 
-    let metadata = Bytes::from_array(&t.env, &[1u8, 2u8, 3u8]);
-    c.update_metadata(&t.sender, &stream_id, &metadata);
+    let uri = Some(soroban_sdk::String::from_str(&t.env, "https://example.com/meta"));
+    c.update_metadata_uri(&t.sender, &stream_id, &uri);
 
     // Stream should still be retrievable
     let stream = c.get_stream(&stream_id);
-    assert_eq!(stream.metadata, metadata);
+    assert_eq!(stream.options.metadata_uri, uri);
 }
 
 #[test]
@@ -157,13 +157,8 @@ fn test_issue_506_multiple_mutating_calls_extend_ttl() {
         &t.token_id,
         &1_000_000,
         &100_000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &default_params(),
     );
 
     // Perform multiple mutating operations at different times
@@ -173,8 +168,8 @@ fn test_issue_506_multiple_mutating_calls_extend_ttl() {
         if i % 2 == 0 {
             c.withdraw(&stream_id, &t.recipient);
         } else {
-            let metadata = Bytes::from_array(&t.env, &[i as u8]);
-            c.update_metadata(&t.sender, &stream_id, &metadata);
+            let uri = Some(soroban_sdk::String::from_str(&t.env, "https://example.com/meta"));
+            c.update_metadata_uri(&t.sender, &stream_id, &uri);
         }
 
         // Stream should still exist after each operation

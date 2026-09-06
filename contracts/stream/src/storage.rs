@@ -1582,9 +1582,9 @@ pub fn propose_upgrade(
     wasm_hash: BytesN<32>,
     proposed_by: &Address,
     expiry_ledger: u64,
-) -> Result<(), String> {
+) -> Result<(), &'static str> {
     if get_pending_upgrade_proposal(env).is_some() {
-        return Err("Upgrade proposal already pending".to_string());
+        return Err("Upgrade proposal already pending");
     }
 
     let proposal = UpgradeProposal {
@@ -1614,16 +1614,16 @@ pub fn get_upgrade_proposal_expiry(env: &Env) -> Option<u64> {
         .get(&upgrade_proposal_expiry_key(env))
 }
 
-pub fn approve_upgrade_proposal(env: &Env, approver: &Address) -> Result<BytesN<32>, String> {
+pub fn approve_upgrade_proposal(env: &Env, approver: &Address) -> Result<BytesN<32>, &'static str> {
     let proposal = get_pending_upgrade_proposal(env)
-        .ok_or("No pending upgrade proposal".to_string())?;
+        .ok_or("No pending upgrade proposal")?;
 
     let expiry = get_upgrade_proposal_expiry(env)
-        .ok_or("Proposal expiry not set".to_string())?;
+        .ok_or("Proposal expiry not set")?;
 
-    if env.ledger().sequence() > expiry {
+    if u64::from(env.ledger().sequence()) > expiry {
         clear_upgrade_proposal(env);
-        return Err("Upgrade proposal expired".to_string());
+        return Err("Upgrade proposal expired");
     }
 
     env.storage()
@@ -1644,3 +1644,59 @@ pub fn clear_upgrade_proposal(env: &Env) {
         .instance()
         .remove(&upgrade_proposal_expiry_key(env));
 }
+
+// ── Cancellation fee ─────────────────────────────────────────────────────────
+const CANCELLATION_FEE_KEY: &str = "cancel_fee";
+
+pub fn get_cancellation_fee_bps(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&Symbol::new(env, CANCELLATION_FEE_KEY))
+        .unwrap_or(0)
+}
+
+pub fn set_cancellation_fee_bps(env: &Env, bps: i128) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, CANCELLATION_FEE_KEY), &bps);
+}
+
+// ── Stake balance ─────────────────────────────────────────────────────────────
+pub fn get_stake_balance(env: &Env, staker: &Address, token: &Address) -> i128 {
+    let key = (Symbol::new(env, "stk"), staker.clone(), token.clone());
+    env.storage()
+        .persistent()
+        .get::<_, i128>(&key)
+        .unwrap_or(0)
+}
+
+pub fn add_stake_balance(env: &Env, staker: &Address, token: &Address, amount: i128) {
+    let key = (Symbol::new(env, "stk"), staker.clone(), token.clone());
+    let current: i128 = env.storage().persistent().get::<_, i128>(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(current + amount));
+}
+
+pub fn sub_stake_balance(env: &Env, staker: &Address, token: &Address, amount: i128) {
+    let key = (Symbol::new(env, "stk"), staker.clone(), token.clone());
+    let current: i128 = env.storage().persistent().get::<_, i128>(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(current - amount));
+}
+
+// ── Minimum stake ─────────────────────────────────────────────────────────────
+const MIN_STAKE_KEY: &str = "min_stake";
+
+pub fn get_min_stake(env: &Env, token: &Address) -> i128 {
+    let key = (Symbol::new(env, MIN_STAKE_KEY), token.clone());
+    env.storage()
+        .instance()
+        .get::<_, i128>(&key)
+        .unwrap_or(0)
+}
+
+pub fn set_min_stake(env: &Env, token: &Address, amount: i128) {
+    let key = (Symbol::new(env, MIN_STAKE_KEY), token.clone());
+    env.storage().instance().set(&key, &amount);
+}
+
+/// Lock-up period in seconds before an unstake request can be completed (7 days).
+pub const STAKE_UNLOCK_DELAY: u64 = 7 * 24 * 60 * 60;

@@ -17,7 +17,7 @@ pub mod roles;
 
 pub use interface::SoroStreamInterface;
 pub use errors::StreamError;
-pub use types::{AuditEntry, CreateStreamOptions, HealthStatus, Stats, Stream, StreamHealth, StreamOptions, StreamStatus, VestingCurve, StreamQueryFilter};
+pub use types::{AuditEntry, CreateStreamOptions, CreateStreamParams, HealthStatus, Stats, Stream, StreamHealth, StreamOptions, StreamStatus, VestingCurve, StreamQueryFilter};
 pub use oracle::IPriceOracle;
 pub use composability::ISoroStreamComposability;
 pub use roles::AdminRole;
@@ -678,9 +678,13 @@ impl SoroStreamContract {
         amount: i128,
         duration_seconds: u64,
         auto_renew: bool,
-        lock_until: u64,
-        options: CreateStreamOptions,
+        params: crate::types::CreateStreamParams,
     ) -> Result<u64, StreamError> {
+        let nonce = params.nonce;
+        let cliff_seconds = params.cliff_seconds;
+        let lock_until = params.lock_until;
+        let comment: Option<String> = None;
+        let options = &params;
         let tag: Option<String> = None;
         let on_complete_contract: Option<Address> = None;
         let on_complete_function: Option<Symbol> = None;
@@ -713,8 +717,8 @@ impl SoroStreamContract {
         // ── Validate stream comment (issue #513) ─────────────────────────────
         // The comment is an optional human-readable payment reference. It must
         // not exceed 256 bytes of UTF-8 text.
-        if let Some(ref comment) = options.comment {
-            if comment.len() > 256 {
+        if let Some(ref c) = comment {
+            if c.len() > 256 {
                 return Err(StreamError::CommentTooLong);
             }
         }
@@ -925,7 +929,7 @@ impl SoroStreamContract {
                 is_dual_stream: false,
                 on_complete_contract,
                 on_complete_function,
-                comment: options.comment.clone(),
+                comment: comment.clone(),
             },
         };
 
@@ -949,7 +953,7 @@ impl SoroStreamContract {
 
         events::stream_created(
             &env, stream_id, &sender, &recipient, amount, flow_rate, end_time,
-            options.non_transferable, &options.comment,
+            options.non_transferable, &comment,
         );
 
         // Emit supplemental config event when non-default options are set so
@@ -997,12 +1001,17 @@ impl SoroStreamContract {
             amount,
             duration_seconds,
             auto_renew,
-            lock_until,
-            CreateStreamOptions {
+            crate::types::CreateStreamParams {
+                nonce: 0,
+                cliff_seconds: 0,
+                lock_until,
                 renew_count,
                 allow_recipient_termination,
                 non_transferable,
-                ..Default::default()
+                holdback_amount: 0,
+                withdrawal_steps: None,
+                min_withdrawal_amount: None,
+                requires_recipient_approval: false,
             },
         )
     }
@@ -2914,6 +2923,7 @@ impl SoroStreamContract {
                     true  // No limit set, can always renew
                 };
 
+                let token_client = token::Client::new(&env, &stream.token);
                 if !can_renew {
                     // Renewal limit reached, complete the stream
                     stream.status = StreamStatus::Completed;
@@ -2923,7 +2933,6 @@ impl SoroStreamContract {
                     decrement_token_stream_count(&env, &stream.token);
 
                     // INTERACTIONS
-                    let token_client = token::Client::new(&env, &stream.token);
                     if recipient_amount > 0 {
                         token_client.transfer(
                             &env.current_contract_address(),
@@ -2977,7 +2986,7 @@ impl SoroStreamContract {
                         let duration = stream.end_time - stream.start_time;
                         let new_end = stream
                             .end_time
-                            .checked_add(stream_duration)
+                            .checked_add(duration)
                             .ok_or(StreamError::Overflow)?;
                         let old_end = stream.end_time;
                         stream.start_time = old_end;
@@ -3350,7 +3359,7 @@ impl SoroStreamContract {
         // Accumulate cancellation fee in the protocol treasury before paying sender.
         if cancel_fee > 0 {
             accumulate_fees(&env, &stream.token, cancel_fee);
-            events::cancellation_fee_collected(&env, stream_id, &stream.sender, cancel_fee, cancel_fee_bps);
+            events::cancellation_fee_collected(&env, stream_id, &stream.sender, cancel_fee, cancel_fee_bps as u32);
         }
         let total_refund = net_refund.saturating_add(holdback_refund);
         if total_refund > 0 {
@@ -3862,11 +3871,17 @@ impl SoroStreamContract {
                 stream_share,
                 original_duration,
                 stream.auto_renew,
-                stream.lock_until.saturating_sub(stream.start_time),
-                CreateStreamOptions {
+                crate::types::CreateStreamParams {
+                    nonce: 0,
+                    cliff_seconds: 0,
+                    lock_until: stream.lock_until.saturating_sub(stream.start_time),
+                    renew_count: stream.options.renew_count,
                     allow_recipient_termination: stream.options.allow_recipient_termination,
-                    comment: stream.options.comment.clone(),
-                    ..Default::default()
+                    non_transferable: stream.options.non_transferable,
+                    holdback_amount: 0,
+                    withdrawal_steps: None,
+                    min_withdrawal_amount: None,
+                    requires_recipient_approval: false,
                 },
             )?;
 
@@ -4676,18 +4691,18 @@ impl SoroStreamContract {
         }
 
         let now = if stream.status == StreamStatus::Paused {
-            stream.last_pause_time
+            stream.options.last_pause_time
         } else {
             env.ledger().timestamp()
         };
 
-        if now >= stream.end_time && stream.total_withdrawn >= stream.deposit {
+        if now >= stream.end_time && stream.options.total_withdrawn >= stream.deposit {
             return Ok(0);
         }
 
-        if stream.milestone_release_mode {
+        if stream.options.milestone_release_mode {
             let mut accrued: i128 = 0;
-            for milestone in stream.milestones.iter() {
+            for milestone in stream.options.milestones.iter() {
                 if (now >= milestone.unlock_time && milestone.status == crate::types::MilestoneStatus::Pending)
                     || milestone.status == crate::types::MilestoneStatus::Released {
                     accrued = accrued
@@ -4698,7 +4713,7 @@ impl SoroStreamContract {
             return Ok(accrued.max(0));
         }
 
-        if stream.is_step_vesting {
+        if stream.options.is_step_vesting {
             let tranches = load_tranches(&env, stream_id);
             let mut accrued: i128 = 0;
             for i in 0..tranches.len() {
@@ -4718,7 +4733,7 @@ impl SoroStreamContract {
             return Ok(0);
         }
 
-        let raw = match &stream.curve {
+        let raw = match &stream.options.curve {
             VestingCurve::Linear => vesting_math::compute_claimable(
                 stream.flow_rate,
                 now,
@@ -4742,7 +4757,7 @@ impl SoroStreamContract {
             }
         };
 
-        let available = stream.deposit.saturating_sub(stream.total_withdrawn);
+        let available = stream.deposit.saturating_sub(stream.options.total_withdrawn);
         let accrued = raw.min(available);
 
         if accrued <= DUST_THRESHOLD {
@@ -4894,10 +4909,8 @@ impl SoroStreamContract {
                     let mut matches = true;
 
                     // Check status filter
-                    if let crate::types::OptionalStreamStatus::Some(ref status) = filter.status {
-                        if stream.status != *status {
-                            matches = false;
-                        }
+                    if filter.filter_by_status && stream.status != filter.status {
+                        matches = false;
                     }
 
                     // Check asset (token) filter
@@ -5501,7 +5514,7 @@ impl SoroStreamContract {
     /// active stream before its natural end. Fee-exempt senders (see `add_fee_exempt`)
     /// are never charged.
     pub fn get_cancellation_fee_bps(env: Env) -> u32 {
-        get_cancellation_fee_bps(&env)
+        get_cancellation_fee_bps(&env) as u32
     }
 
     /// Sets the early-cancellation fee in basis points. Max 10 000 (= 100%). Admin only.
@@ -5517,7 +5530,7 @@ impl SoroStreamContract {
         if fee_bps > 10_000 {
             return Err(StreamError::InvalidDuration);
         }
-        set_cancellation_fee_bps(&env, fee_bps);
+        set_cancellation_fee_bps(&env, fee_bps as i128);
         let ts = env.ledger().timestamp();
         let entry = AuditEntry {
             instruction: String::from_str(&env, "set_cancellation_fee"),
@@ -5614,10 +5627,10 @@ impl SoroStreamContract {
         sender.require_auth();
         let pending_key = (soroban_sdk::Symbol::new(&env, "stk_p"), sender.clone(), token.clone());
         let pending: Option<(i128, u64)> = env.storage().persistent().get(&pending_key);
-        let (amount, unlock_at) = pending.ok_or(StreamError::NoPendingUnstake)?;
+        let (amount, unlock_at) = pending.ok_or(StreamError::StreamNotFound)?;
         let now = env.ledger().timestamp();
         if now < unlock_at {
-            return Err(StreamError::StakeStillLocked);
+            return Err(StreamError::StreamLocked);
         }
         // Clear pending entry and transfer tokens back to sender.
         env.storage().persistent().remove(&pending_key);

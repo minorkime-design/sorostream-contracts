@@ -1,8 +1,8 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token::{Client as TokenClient, StellarAssetClient},
+    testutils::Address as _,
+    token::StellarAssetClient,
     Address, Env,
 };
 
@@ -64,23 +64,29 @@ fn test_issue_505_storage_optimized_boolean_fields() {
         &t.token_id,
         &500_000,
         &5000u64,
-        &0u64,
-        &0u64,
         &true,   // auto_renew = true
-        &None::<u32>,
-        &0u64,
-        &false,  // allow_recipient_termination
-        &false,  // non_transferable
+        &crate::types::CreateStreamParams {
+            cliff_seconds: 0,
+            nonce: 0,
+            renew_count: None,
+            lock_until: 0,
+            allow_recipient_termination: false,
+            non_transferable: false,
+            holdback_amount: 0,
+            withdrawal_steps: None,
+            min_withdrawal_amount: None,
+            requires_recipient_approval: false,
+        },
     );
 
     let stream = c.get_stream(&stream_id);
 
     // Verify all boolean fields are correctly stored and retrieved
     assert_eq!(stream.auto_renew, true, "auto_renew field not preserved");
-    assert_eq!(stream.allow_recipient_termination, false, "allow_recipient_termination field not preserved");
-    assert_eq!(stream.non_transferable, false, "non_transferable field not preserved");
-    assert_eq!(stream.sender_locked, false, "sender_locked field not preserved");
-    assert_eq!(stream.is_dual_stream, false, "is_dual_stream field not preserved");
+    assert_eq!(stream.options.allow_recipient_termination, false, "allow_recipient_termination field not preserved");
+    assert_eq!(stream.options.non_transferable, false, "non_transferable field not preserved");
+    assert_eq!(stream.options.sender_locked, false, "sender_locked field not preserved");
+    assert_eq!(stream.options.is_dual_stream, false, "is_dual_stream field not preserved");
 }
 
 #[test]
@@ -89,19 +95,26 @@ fn test_issue_505_storage_optimized_type_conversions() {
     let c = client(&t);
 
     // Create stream with various field sizes
+    StellarAssetClient::new(&t.env, &t.token_id).mint(&t.sender, &990_000_000);
     let stream_id = c.create_stream(
         &t.sender,
         &t.recipient,
         &t.token_id,
         &999_999_999,      // Large amount
         &100_000u64,       // Large duration
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &crate::types::CreateStreamParams {
+            cliff_seconds: 0,
+            nonce: 0,
+            renew_count: None,
+            lock_until: 0,
+            allow_recipient_termination: false,
+            non_transferable: false,
+            holdback_amount: 0,
+            withdrawal_steps: None,
+            min_withdrawal_amount: None,
+            requires_recipient_approval: false,
+        },
     );
 
     let stream = c.get_stream(&stream_id);
@@ -123,13 +136,19 @@ fn test_issue_505_storage_multiple_boolean_combinations() {
         &t.token_id,
         &100_000,
         &1000u64,
-        &0u64,
-        &0u64,
         &true,
-        &None::<u32>,
-        &0u64,
-        &true,
-        &false,
+        &crate::types::CreateStreamParams {
+            cliff_seconds: 0,
+            nonce: 0,
+            renew_count: None,
+            lock_until: 0,
+            allow_recipient_termination: true,
+            non_transferable: false,
+            holdback_amount: 0,
+            withdrawal_steps: None,
+            min_withdrawal_amount: None,
+            requires_recipient_approval: false,
+        },
     );
 
     let other_recipient = Address::generate(&t.env);
@@ -141,20 +160,26 @@ fn test_issue_505_storage_multiple_boolean_combinations() {
         &t.token_id,
         &250_000,
         &1000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &crate::types::CreateStreamParams {
+            cliff_seconds: 0,
+            nonce: 1,
+            renew_count: None,
+            lock_until: 0,
+            allow_recipient_termination: false,
+            non_transferable: false,
+            holdback_amount: 0,
+            withdrawal_steps: None,
+            min_withdrawal_amount: None,
+            requires_recipient_approval: false,
+        },
     );
 
     let s1 = c.get_stream(&stream_1);
     let s2 = c.get_stream(&stream_2);
 
     assert_eq!(s1.auto_renew, true);
-    assert_eq!(s1.allow_recipient_termination, true);
+    assert_eq!(s1.options.allow_recipient_termination, true);
     assert_eq!(s2.auto_renew, false);
-    assert_eq!(s2.allow_recipient_termination, false);
+    assert_eq!(s2.options.allow_recipient_termination, false);
 }

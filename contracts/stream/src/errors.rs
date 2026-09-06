@@ -62,4 +62,6 @@ pub enum StreamError {
     MaxDepositExceeded = 64,
     /// The comment attached to a stream exceeds the 256-byte limit.
     CommentTooLong = 65,
+    /// Sender has not staked the required minimum collateral for this token.
+    InsufficientStake = 66,
 }

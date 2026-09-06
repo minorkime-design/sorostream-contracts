@@ -2,7 +2,7 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token::{Client as TokenClient, StellarAssetClient},
+    token::StellarAssetClient,
     Address, Env,
 };
 
@@ -48,6 +48,21 @@ fn client(t: &TestEnv) -> SoroStreamContractClient<'_> {
     SoroStreamContractClient::new(&t.env, &t.contract_id)
 }
 
+fn default_params() -> crate::types::CreateStreamParams {
+    crate::types::CreateStreamParams {
+        cliff_seconds: 0,
+        nonce: 0,
+        renew_count: None,
+        lock_until: 0,
+        allow_recipient_termination: false,
+        non_transferable: false,
+        holdback_amount: 0,
+        withdrawal_steps: None,
+        min_withdrawal_amount: None,
+        requires_recipient_approval: false,
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Issue #507: Archived Stream Storage Tier Tests
 // ─────────────────────────────────────────────────────────────────────────
@@ -65,13 +80,8 @@ fn test_issue_507_archive_completed_stream() {
         &t.token_id,
         &100_000,
         &1000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &default_params(),
     );
 
     // Advance to stream completion
@@ -80,8 +90,6 @@ fn test_issue_507_archive_completed_stream() {
 
     // After full withdrawal, stream should be completed or archived
     let result = c.try_get_stream(&stream_id);
-    // Stream should either be removed or available for archival
-    // Both are valid outcomes for issue #507
     assert!(result.is_err() || c.get_stream(&stream_id).status == StreamStatus::Completed);
 }
 
@@ -97,26 +105,21 @@ fn test_issue_507_archive_stream_preserves_history() {
         &t.token_id,
         &500_000,
         &5000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &default_params(),
     );
 
     // Verify initial stream state
     let initial_stream = c.get_stream(&stream_id);
     assert_eq!(initial_stream.deposit, 500_000);
-    assert_eq!(initial_stream.flow_rate, 100); // flow_rate calculated from deposit/duration = 500_000 / 5000 = 100
+    assert_eq!(initial_stream.flow_rate, 100); // flow_rate = 500_000 / 5000 = 100
 
     // Partial withdrawal
     t.env.ledger().set_timestamp(1000);
     c.withdraw(&stream_id, &t.recipient);
 
     let after_withdraw = c.get_stream(&stream_id);
-    let withdrawn_amount = after_withdraw.total_withdrawn;
+    let withdrawn_amount = after_withdraw.options.total_withdrawn;
     assert!(withdrawn_amount > 0, "Stream should track withdrawal history");
 }
 
@@ -126,10 +129,10 @@ fn test_issue_507_completed_streams_reduce_storage_footprint() {
     let c = client(&t);
     t.env.ledger().set_timestamp(0);
 
-    let mut completed_stream_ids = Vec::new();
+    let mut completed_stream_ids = std::vec::Vec::new();
 
     // Create multiple streams that will complete
-    for i in 0..3 {
+    for i in 0..3u64 {
         let recipient_i = if i == 0 {
             t.recipient.clone()
         } else {
@@ -144,13 +147,19 @@ fn test_issue_507_completed_streams_reduce_storage_footprint() {
             &t.token_id,
             &50_000,
             &500u64,
-            &0u64,
-            &0u64,
             &false,
-            &None::<u32>,
-            &0u64,
-            &false,
-            &false,
+            &crate::types::CreateStreamParams {
+                cliff_seconds: 0,
+                nonce: i,
+                renew_count: None,
+                lock_until: 0,
+                allow_recipient_termination: false,
+                non_transferable: false,
+                holdback_amount: 0,
+                withdrawal_steps: None,
+                min_withdrawal_amount: None,
+                requires_recipient_approval: false,
+            },
         );
 
         completed_stream_ids.push(stream_id);
@@ -166,9 +175,8 @@ fn test_issue_507_completed_streams_reduce_storage_footprint() {
     // Verify streams are completed or moved to archive tier
     for stream_id in completed_stream_ids {
         let result = c.try_get_stream(&stream_id);
-        // Completed/archived streams should either be unavailable or marked as completed
         if result.is_ok() {
-            assert_eq!(result.unwrap().status, StreamStatus::Completed);
+            assert_eq!(result.unwrap().unwrap().status, StreamStatus::Completed);
         }
     }
 }
@@ -185,13 +193,8 @@ fn test_issue_507_archive_tier_configurable_retention() {
         &t.token_id,
         &100_000,
         &1000u64,
-        &0u64,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &default_params(),
     );
 
     // Complete the stream
@@ -200,5 +203,5 @@ fn test_issue_507_archive_tier_configurable_retention() {
 
     // Stream should be completed
     let result = c.try_get_stream(&stream_id);
-    assert!(result.is_err() || result.unwrap().status == StreamStatus::Completed);
+    assert!(result.is_err() || result.unwrap().unwrap().status == StreamStatus::Completed);
 }

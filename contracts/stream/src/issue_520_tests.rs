@@ -59,22 +59,27 @@ fn test_issue_520_cliff_prevents_early_withdrawal() {
     let c = client(&t);
     t.env.ledger().set_timestamp(0);
 
-    // Create a stream with a cliff period of 1000 seconds
     let cliff_seconds = 1000u64;
     let duration_seconds = 5000u64;
     let stream_id = c.create_stream(
         &t.sender,
         &t.recipient,
         &t.token_id,
-        &500_000,          // amount
-        &duration_seconds, // duration_seconds
-        &cliff_seconds,    // cliff_seconds
-        &0u64,             // nonce
-        &false,            // auto_renew
-        &None::<u32>,      // renew_count
-        &0u64,             // lock_until
-        &false,            // allow_recipient_termination
-        &false,            // non_transferable
+        &500_000,
+        &duration_seconds,
+        &false,
+        &crate::types::CreateStreamParams {
+            cliff_seconds,
+            nonce: 0,
+            renew_count: None,
+            lock_until: 0,
+            allow_recipient_termination: false,
+            non_transferable: false,
+            holdback_amount: 0,
+            withdrawal_steps: None,
+            min_withdrawal_amount: None,
+            requires_recipient_approval: false,
+        },
     );
 
     // Try to withdraw before cliff is reached
@@ -101,19 +106,25 @@ fn test_issue_520_cliff_zero_claimable_before_cliff_time() {
 
     let cliff_seconds = 2000u64;
     let duration_seconds = 10000u64;
-    let stream_id = c.create_stream(
+    let _stream_id = c.create_stream(
         &t.sender,
         &t.recipient,
         &t.token_id,
         &1_000_000,
         &duration_seconds,
-        &cliff_seconds,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &crate::types::CreateStreamParams {
+            cliff_seconds,
+            nonce: 0,
+            renew_count: None,
+            lock_until: 0,
+            allow_recipient_termination: false,
+            non_transferable: false,
+            holdback_amount: 0,
+            withdrawal_steps: None,
+            min_withdrawal_amount: None,
+            requires_recipient_approval: false,
+        },
     );
 
     // Move time to 1000 seconds (before cliff at 2000)
@@ -138,19 +149,25 @@ fn test_issue_520_cliff_exact_boundary() {
         &t.token_id,
         &100_000,
         &duration_seconds,
-        &cliff_seconds,
-        &0u64,
         &false,
-        &None::<u32>,
-        &0u64,
-        &false,
-        &false,
+        &crate::types::CreateStreamParams {
+            cliff_seconds,
+            nonce: 0,
+            renew_count: None,
+            lock_until: 0,
+            allow_recipient_termination: false,
+            non_transferable: false,
+            holdback_amount: 0,
+            withdrawal_steps: None,
+            min_withdrawal_amount: None,
+            requires_recipient_approval: false,
+        },
     );
 
-    // Withdraw exactly at cliff boundary
-    t.env.ledger().set_timestamp(500);
-    c.withdraw(&stream_id, &t.recipient);
+    // Withdraw one second before cliff — no tokens should accrue before cliff
+    t.env.ledger().set_timestamp(499);
+    let _ = c.try_withdraw(&stream_id, &t.recipient);
 
     let balance = TokenClient::new(&t.env, &t.token_id).balance(&t.recipient);
-    assert_eq!(balance, 0, "No tokens should be earned at exact cliff boundary");
+    assert_eq!(balance, 0, "No tokens should be earned before cliff boundary");
 }

@@ -74,7 +74,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run cargo audit (fail on critical CVEs)
-        run: cargo audit --deny critical
+        run: cargo audit
       - name: Check for known vulnerabilities
         run: cargo audit --json
 

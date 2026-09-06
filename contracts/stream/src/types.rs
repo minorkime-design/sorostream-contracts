@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Symbol, Vec};
 
 /// Vesting release curve applied to a payment stream.
 ///
@@ -227,6 +227,19 @@ pub struct StreamOptions {
     /// Optional human-readable payment reference attached by the sender at
     /// creation time. UTF-8 text, at most 256 bytes.
     pub comment: Option<String>,
+
+    // ── Holdback escrow ──────────────────────────────────────────────────────
+
+    /// Amount held back in escrow at creation time (separate from the streaming
+    /// deposit). Released to the recipient via `release_holdback`. 0 = no holdback.
+    pub holdback_amount: i128,
+    /// Whether the holdback has already been released to the recipient.
+    pub holdback_claimed: bool,
+
+    // ── Dual-token stream flag ───────────────────────────────────────────────
+
+    /// Whether this stream is a dual-token stream (two token contract addresses).
+    pub is_dual_stream: bool,
 }
 
 /// Represents a single payment stream.
@@ -527,4 +540,31 @@ pub struct StreamCreateOptions {
     pub allow_recipient_termination: bool,
     /// Whether the stream's recipient rights are locked to the original recipient.
     pub non_transferable: bool,
+}
+
+/// All creation-time parameters for `create_stream`, bundled into one struct
+/// so the public entry point stays within Soroban's 10-argument function limit.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreateStreamParams {
+    /// Number of seconds after start_time before any tokens are claimable.
+    pub cliff_seconds: u64,
+    /// Sender-supplied unique nonce used to derive the stream ID deterministically.
+    pub nonce: u64,
+    /// Optional limit on the number of auto-renewals.
+    pub renew_count: Option<u32>,
+    /// Ledger timestamp before which withdrawals are not permitted (0 = no lock).
+    pub lock_until: u64,
+    /// Whether the recipient is allowed to terminate the stream early.
+    pub allow_recipient_termination: bool,
+    /// Whether the stream's recipient rights are non-transferable.
+    pub non_transferable: bool,
+    /// Amount held back in escrow at creation (0 = no holdback).
+    pub holdback_amount: i128,
+    /// Optional number of evenly-spaced withdrawal steps.
+    pub withdrawal_steps: Option<u32>,
+    /// Optional minimum claimable amount required before a withdrawal is accepted.
+    pub min_withdrawal_amount: Option<i128>,
+    /// Whether this stream requires explicit recipient approval before tokens accrue.
+    pub requires_recipient_approval: bool,
 }

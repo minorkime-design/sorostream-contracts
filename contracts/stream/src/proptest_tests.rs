@@ -41,6 +41,25 @@ fn setup_env() -> (Env, Address, Address, Address, Address) {
     (env, contract_id, token_id, sender, recipient)
 }
 
+fn make_params(cliff_seconds: u64, nonce: u64, lock_until: u64, allow_recipient_termination: bool) -> crate::types::CreateStreamParams {
+    crate::types::CreateStreamParams {
+        cliff_seconds,
+        nonce,
+        renew_count: None,
+        lock_until,
+        allow_recipient_termination,
+        non_transferable: false,
+        holdback_amount: 0,
+        withdrawal_steps: None,
+        min_withdrawal_amount: None,
+        requires_recipient_approval: false,
+    }
+}
+
+fn default_params() -> crate::types::CreateStreamParams {
+    make_params(0, 0, 0, false)
+}
+
 // ── create_stream properties ────────────────────────────────────────────────
 
 proptest! {
@@ -64,8 +83,7 @@ proptest! {
         let flow_rate = amount / duration as i128;
         if flow_rate == 0 { return Ok(()); }
 
-        c.create_stream(&sender, &recipient, &token_id, &amount, &duration, &cliff, &0u64, &false, &0u64,
-        &false, &0i128);
+        c.create_stream(&sender, &recipient, &token_id, &amount, &duration, &false, &make_params(cliff, 0, 0, false));
 
         let sender_after = token.balance(&sender);
         let contract_after = token.balance(&contract_id);
@@ -90,9 +108,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &cliff, &0u64, &false, &0u64,
-        &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &make_params(cliff, 0, 0, false),
         );
 
         let stream = c.get_stream(&stream_id);
@@ -126,9 +143,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-        &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
         let token = TokenClient::new(&env, &token_id);
 
@@ -172,9 +188,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-        &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
         let token = TokenClient::new(&env, &token_id);
 
@@ -206,9 +221,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-        &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
         let stream_before = c.get_stream(&stream_id);
 
@@ -249,9 +263,8 @@ proptest! {
         let sender_before = token.balance(&sender);
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-        &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
 
         let cancel_time = cancel_time.min(duration - 1).max(1);
@@ -282,9 +295,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-        &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
 
         env.ledger().set_timestamp(1);
@@ -319,9 +331,8 @@ proptest! {
 
             // create_stream must fail when paused
             let result = c.try_create_stream(
-                &sender, &recipient, &token_id, &100_000, &1000, &0, &0u64, &false, &0u64,
-        &false,
-                &0i128,
+                &sender, &recipient, &token_id, &100_000, &1000, &false,
+                &default_params(),
             );
             prop_assert!(result.is_err());
 
@@ -331,9 +342,8 @@ proptest! {
 
                 // create_stream must work after unpause
                 let result = c.try_create_stream(
-                    &sender, &recipient, &token_id, &100_000, &1000, &0, &0u64, &false, &0u64,
-        &false,
-                    &0i128,
+                    &sender, &recipient, &token_id, &100_000, &1000, &false,
+                    &default_params(),
                 );
                 prop_assert!(result.is_ok());
             }
@@ -362,8 +372,8 @@ proptest! {
         StellarAssetClient::new(&env, &token_id).mint(&sender, &mint_amount);
 
         let result = c.try_create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64, &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
 
         // No panics should occur. The result is either Ok or an expected error.
@@ -379,7 +389,7 @@ proptest! {
                         | StreamError::InvalidEndTime
                         | StreamError::Overflow
                         | StreamError::DuplicateStream
-                        | StreamError::SenderStreamLimitExceeded
+                        | StreamError::NewSenderStreamCapExceeded
                 ),
                 "unexpected error variant: {:?} (amount={}, duration={})",
                 err, amount, duration,
@@ -400,8 +410,8 @@ proptest! {
         env.ledger().set_timestamp(0);
 
         let result = c.try_create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &cliff, &0u64, &false, &0u64, &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &make_params(cliff, 0, 0, false),
         );
 
         if cliff >= duration {
@@ -426,15 +436,15 @@ proptest! {
         env.ledger().set_timestamp(0);
 
         let result1 = c.try_create_stream(
-            &sender, &recipient, &token_id, &100_000, &1000, &0, &nonce1, &false, &0u64, &false,
-            &0i128,
+            &sender, &recipient, &token_id, &100_000, &1000, &false,
+            &make_params(0, nonce1, 0, false),
         );
 
         if result1.is_ok() && nonce1 == nonce2 {
             // Same nonce must be rejected
             let result2 = c.try_create_stream(
-                &sender, &recipient, &token_id, &100_000, &1000, &0, &nonce2, &false, &0u64, &false,
-                &0i128,
+                &sender, &recipient, &token_id, &100_000, &1000, &false,
+                &make_params(0, nonce2, 0, false),
             );
             prop_assert!(
                 result2.is_err(),
@@ -458,8 +468,8 @@ proptest! {
         StellarAssetClient::new(&env, &token_id).mint(&sender, &amount);
 
         let result = c.try_create_stream(
-            &sender, &recipient, &token_id, &amount, &large_duration, &0u64, &0u64, &false, &0u64, &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &large_duration, &false,
+            &default_params(),
         );
 
         // No panics allowed
@@ -501,8 +511,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64, &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
         let stream_before = c.get_stream(&stream_id);
         let old_end_time = stream_before.end_time;
@@ -548,8 +558,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64, &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
         let stream_before = c.get_stream(&stream_id);
         let old_end_time = stream_before.end_time;
@@ -594,8 +604,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64, &false,
-            &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
         let stream_before = c.get_stream(&stream_id);
         let old_deposit = stream_before.deposit;
@@ -641,8 +651,8 @@ proptest! {
         let sender_before = token.balance(&sender);
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-            &false, &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
 
         // Cancel at specified time (bounded to [0, end_time] for edge coverage)
@@ -692,8 +702,8 @@ proptest! {
         let sender_before = token.balance(&sender);
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-            &false, &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
 
         // Optionally withdraw before cancel
@@ -746,8 +756,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-            &false, &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
 
         let mut total_withdrawn: i128 = 0;
@@ -804,8 +814,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-            &false, &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
         let stream = c.get_stream(&stream_id);
 
@@ -853,8 +863,8 @@ proptest! {
         if flow_rate == 0 { return Ok(()); }
 
         let stream_id = c.create_stream(
-            &sender, &recipient, &token_id, &amount, &duration, &0u64, &0u64, &false, &0u64,
-            &false, &0i128,
+            &sender, &recipient, &token_id, &amount, &duration, &false,
+            &default_params(),
         );
 
         let withdraw_time = withdraw_time.min(duration);
